@@ -2,5 +2,9 @@ venv_fdi/
 __pycache__/
 *.log
 *.DS_Store
-data/raw/*
+data/raw/
+# Ignore everything under processed except 10k_text
 data/processed/*
+!data/processed/10k_text/
+!data/processed/10k_text/*.txt
+
