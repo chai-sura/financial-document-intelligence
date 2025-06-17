@@ -1,9 +1,8 @@
 import os
 import re
-import html
 import shutil
-import unicodedata
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+import warnings
 
 RAW_DIR = 'data/raw/10k_filings'
 TEXT_DIR = 'data/processed/10k_text'
@@ -12,137 +11,155 @@ def ensure_output_dirs():
     if os.path.exists(TEXT_DIR):
         shutil.rmtree(TEXT_DIR)
     os.makedirs(TEXT_DIR, exist_ok=True)
-
     for company in os.listdir(RAW_DIR):
         os.makedirs(os.path.join(TEXT_DIR, company), exist_ok=True)
 
-def extract_text_from_html(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
+def clean_line(line):
+    return line.replace('\xa0', ' ').strip()
 
+def is_junk(line):
+    # Remove XBRL, page numbers, one-word lines, numbers, etc.
+    if not line or line.lower() in ('true', 'false', 'none', 'document'):
+        return True
+    if re.fullmatch(r'[a-zA-Z0-9\-_]+:[\w\-_]+', line):  # us-gaap etc.
+        return True
+    if re.fullmatch(r'[PFYQ]\d*', line):
+        return True
+    if re.fullmatch(r'\d{6,}', line):
+        return True
+    if re.fullmatch(r'[0-9\.\-]+', line):
+        return True
+    if re.fullmatch(r'page\s*\d+', line, re.IGNORECASE):
+        return True
+    if re.fullmatch(r'\d+\s*$', line):  # single numbers (likely page/line)
+        return True
+    return False
+
+def table_to_text(table):
+    rows = table.find_all('tr')
+    lines = []
+    for row in rows:
+        cols = [clean_line(td.get_text(separator=' ', strip=True)) for td in row.find_all(['td', 'th'])]
+        # Remove columns that are just numbers (often page numbers)
+        cols = [col for col in cols if not re.fullmatch(r'\d+', col)]
+        if any(c for c in cols if c.strip()):
+            lines.append("   ".join(cols))
+    return '\n'.join(lines)
+
+def extract_text_from_html(html_content):
+    warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+    soup = BeautifulSoup(html_content, 'lxml')
     for tag in soup(['script', 'style', 'footer', 'head', 'nav', 'noscript', 'form']):
         tag.decompose()
 
-    for br in soup.find_all('br'):
-        br.replace_with('\n')
-    for tag in soup.find_all(['p', 'div', 'center']):
-        tag.insert_before('\n')
-        tag.insert_after('\n')
+    blocks = []
+    last_line = None
 
-    text = soup.get_text(separator='\n')
-    text = html.unescape(text)
-    text = unicodedata.normalize('NFKD', text)
-    text = text.replace('\u2019', "'").replace('\u2018', "'").replace('\u201c', '"').replace('\u201d', '"')
-    text = re.sub(r'(FORM)\s*\n\s*(10-K)', r'\1 10-K', text, flags=re.IGNORECASE)
-    text = re.sub(r'^.*Form\s+10-K.*Page\s+\d+.*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Collect block-level text with spacing
+    for elem in soup.body.descendants:
+        if elem.name == 'table':
+            md = table_to_text(elem)
+            if md and md != last_line:
+                blocks.append(md)
+                last_line = md
+        elif elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            text = elem.get_text(separator=' ', strip=True)
+            if text and text != last_line:
+                blocks.append('\n' + text.upper() + '\n')
+                last_line = text
+        elif elem.name == 'p':
+            text = elem.get_text(separator=' ', strip=True)
+            if text and text != last_line:
+                blocks.append('\n' + text + '\n')
+                last_line = text
+        elif elem.name == 'li':
+            text = elem.get_text(separator=' ', strip=True)
+            if text and text != last_line:
+                blocks.append('- ' + text)
+                last_line = text
+        elif elem.name == 'br':
+            continue
+        elif elem.string and elem.string.strip():
+            text = clean_line(elem.string)
+            if text and text != last_line:
+                blocks.append(text)
+                last_line = text
 
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-
-    # Strip lines with known metadata noise at the top
-    unwanted_prefixes = re.compile(r'^(aapl:|country:|xbrli:)', re.IGNORECASE)
-    lines = [line for line in lines if not unwanted_prefixes.match(line)]
-
-    # Preserve header block
-    start_idx, end_idx = 0, 0
-    for i, line in enumerate(lines[:150]):
-        if 'UNITED STATES SECURITIES AND EXCHANGE COMMISSION' in line.upper():
-            start_idx = i
-        if 'TABLE OF CONTENTS' in line.upper():
-            end_idx = i + 1
+    # Remove any preamble before the SEC heading
+    doc_start_idx = None
+    for idx, block in enumerate(blocks):
+        if 'SECURITIES AND EXCHANGE COMMISSION' in block.upper():
+            doc_start_idx = max(0, idx-1)
             break
-    heading_block = lines[start_idx:end_idx]
-    heading_text = '\n'.join(heading_block).strip()
-    lines = lines[end_idx:]
+    if doc_start_idx is not None:
+        blocks = blocks[doc_start_idx:]
 
-    # Merge split item lines
-    merged_lines = []
-    i = 0
-    while i < len(lines):
-        current = lines[i]
-        if re.match(r'^Item\s+\d+[A-Z]?\.$', current, re.IGNORECASE):
-            next_line = lines[i+1] if i + 1 < len(lines) else ''
-            if next_line and len(next_line.split()) <= 6:
-                merged_lines.append(f"{current} {next_line}")
-                i += 2
+    # Remove page numbers, duplicates, and junk lines
+    cleaned = []
+    seen = set()
+    for block in blocks:
+        for line in block.splitlines():
+            l = clean_line(line)
+            if is_junk(l) or not l or l in seen:
                 continue
-        merged_lines.append(current)
-        i += 1
-    lines = merged_lines
+            cleaned.append(l)
+            seen.add(l)
 
-    xbrl_noise = re.compile(r'^(P\d+[YMWD]|FY|Q\d|--?\d{2}-\d{2}|0{5,}|[A-Za-z]+:[A-Za-z0-9]+Member|us-gaap:[\w]+|aapl:[\w]+|iso4217:[A-Z]+|country:[A-Z]+|\d{4}-\d{2}-\d{2}|\d{9,}|^\d+(\.\d+)?$)', re.IGNORECASE)
-
-    buffer = []
-    cleaned_lines = []
-
-    for line in lines:
-        if not line or line.lower() in ['true', 'false']:
-            continue
-        if xbrl_noise.fullmatch(line.strip()):
-            continue
-
-        item_match = re.match(r'^(Item\s+\d+[A-Z]?\.)\s*(.*)', line, re.IGNORECASE)
-        part_match = re.match(r'^PART\s+[IVXLC]+\s*$', line.strip(), re.IGNORECASE)
-
-        if item_match:
-            if buffer:
-                cleaned_lines.append(' '.join(buffer))
-                buffer = []
-            heading = f"{item_match.group(1).strip()} {item_match.group(2).strip()}"
-            cleaned_lines.append(f"\n\n {heading.upper()} \n\n")
-        elif part_match:
-            if buffer:
-                cleaned_lines.append(' '.join(buffer))
-                buffer = []
-            cleaned_lines.append(f"\n\n {line.strip()} \n")
+    # Merge lines into paragraphs and add spacing between headers/tables/sections
+    output = []
+    para = ""
+    for block in cleaned:
+        if (block.isupper() and len(block.split()) < 10) or re.match(r'^(ITEM\s+\d+[A-Z]?\.|PART\s+[IVXLC]+)', block, re.IGNORECASE):
+            if para:
+                output.append(para.strip())
+                para = ""
+            output.append('\n' + block.strip() + '\n')
+        elif '   ' in block or '\t' in block:  # Table-like block
+            if para:
+                output.append(para.strip())
+                para = ""
+            output.append(block.strip())
         else:
-            buffer.append(line)
+            if para:
+                if not para.rstrip().endswith(('.', ':', ';', '?', '!', '"', '”')):
+                    para += " " + block
+                else:
+                    output.append(para.strip())
+                    para = block
+            else:
+                para = block
+    if para:
+        output.append(para.strip())
 
-    if buffer:
-        cleaned_lines.append(' '.join(buffer))
-
-    return heading_text + '\n\n' + '\n\n'.join(cleaned_lines)
+    # Collapse multiple blank lines and clean up
+    text = '\n\n'.join([b for b in output if b.strip()])
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 def convert_html_to_text():
     for company in os.listdir(RAW_DIR):
         raw_path = os.path.join(RAW_DIR, company)
         if not os.path.isdir(raw_path):
             continue
-
         processed_path = os.path.join(TEXT_DIR, company)
         os.makedirs(processed_path, exist_ok=True)
-
         for filename in os.listdir(raw_path):
             if filename.endswith(('.html', '.htm')):
                 in_file = os.path.join(raw_path, filename)
-                out_file = os.path.join(processed_path, re.sub(r'[^A-Za-z0-9_\-]', '_', os.path.splitext(filename)[0]) + '.txt')
+                out_file = os.path.join(
+                    processed_path,
+                    re.sub(r'[^A-Za-z0-9_\-]', '_', os.path.splitext(filename)[0]) + '.txt'
+                )
                 try:
                     with open(in_file, 'r', encoding='utf-8', errors='ignore') as f:
                         html_content = f.read()
                     plain_text = extract_text_from_html(html_content)
                     with open(out_file, 'w', encoding='utf-8') as out:
                         out.write(plain_text)
-                    print(f"Converted {filename} -> {out_file}")
+                    print(f"✅ {filename} -> {out_file}")
                 except Exception as e:
-                    print(f"Error processing {in_file}: {e}")
-
-def scan_text_files_for_html():
-    html_pattern = re.compile(r'<[^>]+>')
-    for company in os.listdir(TEXT_DIR):
-        company_path = os.path.join(TEXT_DIR, company)
-        if not os.path.isdir(company_path):
-            continue
-
-        for filename in os.listdir(company_path):
-            if not filename.endswith('.txt'):
-                continue
-            file_path = os.path.join(company_path, filename)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                text = f.read()
-            html_like = html_pattern.findall(text)
-            if html_like:
-                print(f"[HTML DETECTED] {filename}: {html_like[:3]}")
+                    print(f"❌ Error processing {in_file}: {e}")
 
 if __name__ == '__main__':
     ensure_output_dirs()
     convert_html_to_text()
-    scan_text_files_for_html()
