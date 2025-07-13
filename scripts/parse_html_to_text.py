@@ -3,16 +3,17 @@ import re
 import shutil
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
+import argparse
 
-RAW_DIR = 'data/raw/10k_filings'
-TEXT_DIR = 'data/processed/10k_text'
+#RAW_DIR = 'data/raw/10k_filings'
+#TEXT_DIR = 'data/processed/10k_text'
 
-def ensure_output_dirs():
-    if os.path.exists(TEXT_DIR):
-        shutil.rmtree(TEXT_DIR)
-    os.makedirs(TEXT_DIR, exist_ok=True)
-    for company in os.listdir(RAW_DIR):
-        os.makedirs(os.path.join(TEXT_DIR, company), exist_ok=True)
+def ensure_output_dirs(raw_dir, text_dir):
+    if os.path.exists(text_dir):
+        shutil.rmtree(text_dir)
+    os.makedirs(text_dir, exist_ok=True)
+    for company in os.listdir(raw_dir):
+        os.makedirs(os.path.join(text_dir, company), exist_ok=True)
 
 def clean_line(line):
     return line.replace('\xa0', ' ').strip()
@@ -136,12 +137,13 @@ def extract_text_from_html(html_content):
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-def convert_html_to_text():
-    for company in os.listdir(RAW_DIR):
-        raw_path = os.path.join(RAW_DIR, company)
+def convert_html_to_text(raw_dir, text_dir):
+    ensure_output_dirs(raw_dir, text_dir)
+    for company in os.listdir(raw_dir):
+        raw_path = os.path.join(raw_dir, company)
         if not os.path.isdir(raw_path):
             continue
-        processed_path = os.path.join(TEXT_DIR, company)
+        processed_path = os.path.join(text_dir, company)
         os.makedirs(processed_path, exist_ok=True)
         for filename in os.listdir(raw_path):
             if filename.endswith(('.html', '.htm')):
@@ -156,10 +158,32 @@ def convert_html_to_text():
                     plain_text = extract_text_from_html(html_content)
                     with open(out_file, 'w', encoding='utf-8') as out:
                         out.write(plain_text)
-                    print(f"✅ {filename} -> {out_file}")
+                    print(f"{filename} -> {out_file}")
                 except Exception as e:
-                    print(f"❌ Error processing {in_file}: {e}")
+                    print(f"Error processing {in_file}: {e}")
+
+def convert_single_html_to_text(html_file_path, out_file_path):
+    try:
+        with open(html_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            html_content = f.read()
+        plain_text = extract_text_from_html(html_content)
+        with open(out_file_path, 'w', encoding='utf-8') as out:
+            out.write(plain_text)
+        print(f"{html_file_path} -> {out_file_path}")
+    except Exception as e:
+        print(f"Error processing {html_file_path}: {e}")
 
 if __name__ == '__main__':
-    ensure_output_dirs()
-    convert_html_to_text()
+    parser = argparse.ArgumentParser(description="Convert 10-K HTML to plain text.")
+    parser.add_argument('--raw_dir', type=str, help='Directory with company folders of HTML files')
+    parser.add_argument('--text_dir', type=str, help='Directory to save processed text')
+    parser.add_argument('--file', type=str, help='Convert a single HTML file')
+    parser.add_argument('--out', type=str, help='Output text file for single HTML')
+    args = parser.parse_args()
+
+    if args.file and args.out:
+        convert_single_html_to_text(args.file, args.out)
+    elif args.raw_dir and args.text_dir:
+        convert_html_to_text(args.raw_dir, args.text_dir)
+    else:
+        print("Provide either --file and --out, or --raw_dir and --text_dir.")
