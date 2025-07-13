@@ -1,6 +1,3 @@
-# financial-document-intelligence
-## Financial Document Intelligence
-
 ## Financial Q&A Agent
 A pipeline and AI agent for automated question answering and analytics on financial documents (such as SEC 10-K filings).
 
