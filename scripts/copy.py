@@ -26,10 +26,9 @@ def html_to_markdown_lines(html_content):
 def clean_xbrl_junk_lines(lines):
     output_lines = []
     start_copying = False
-
     footer_re = re.compile(
-        r"^[\w\s\.\-&]+?\|\s*\d{4}\s*Form\s*10-K\s*\|\s*\d+$", re.IGNORECASE)
-
+        r"^[\w\s\.\-&]+?\|\s*\d{4}\s*Form\s*10-K\s*\|\s*\d+$", re.IGNORECASE
+    )
     image_re = re.compile(r"!\[.*\]\(.*\.(jpg|jpeg|png|gif)\)", re.IGNORECASE)
     for line in lines:
         line_strip = line.strip()
@@ -160,10 +159,9 @@ def convert_html_to_text_with_html2text(raw_dir, text_dir):
                     with open(in_file, 'r', encoding='utf-8', errors='ignore') as f:
                         html_content = f.read()
                     lines = html_to_markdown_lines(html_content)
+                    lines = process_lines_for_toc(lines)
                     lines = clean_xbrl_junk_lines(lines)
-                    #lines = process_lines_for_toc(lines)
                     lines = align_tables_and_format(lines)
-                    lines = [line.replace('|', ' ') for line in lines]
                     lines = add_blank_lines(lines)
                     clean_text = '\n'.join(lines)
                     with open(out_file, 'w', encoding='utf-8') as out:
