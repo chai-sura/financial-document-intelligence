@@ -17,6 +17,69 @@ def is_table_line(line):
         return True
     return False
 
+
+def chunk_txt_file_section_based(input_path, company=None, year=None, min_chunk_words=8):
+    with open(input_path, 'r', encoding='utf-8') as f:
+        lines = [l.rstrip('\n') for l in f.readlines()]
+
+    chunks = []
+    chunk_counter = 1
+
+    # Add special first chunk: company + year
+    info_text = f"COMPANY: {company}\nYEAR: {year}"
+    chunks.append({
+        "chunk_id": chunk_counter,
+        "text": info_text,
+        "section": None,
+        "type": "info",
+        "company": company,
+        "year": year
+    })
+    chunk_counter += 1
+
+    section_lines = []
+    section_heading = None
+
+    for idx, line in enumerate(lines):
+        line_strip = line.strip()
+        # Start of new section (heading)
+        if is_heading(line_strip):
+            # If we have collected a section, flush it
+            if section_heading and section_lines:
+                content = "\n".join(section_lines).strip()
+                if len(content.split()) >= min_chunk_words:
+                    chunks.append({
+                        "chunk_id": chunk_counter,
+                        "text": content,
+                        "section": section_heading,
+                        "type": "section",
+                        "company": company,
+                        "year": year
+                    })
+                    chunk_counter += 1
+            # Start new section
+            section_heading = line_strip
+            section_lines = []
+        else:
+            if section_heading:  # Only collect lines after the first heading
+                section_lines.append(line_strip)
+
+    # Flush the last section if any
+    if section_heading and section_lines:
+        content = "\n".join(section_lines).strip()
+        if len(content.split()) >= min_chunk_words:
+            chunks.append({
+                "chunk_id": chunk_counter,
+                "text": content,
+                "section": section_heading,
+                "type": "section",
+                "company": company,
+                "year": year
+            })
+
+    return chunks
+
+
 def chunk_txt_file_fine(input_path, company=None, year=None, max_paragraph_len=800, min_chunk_words=8):
     with open(input_path, 'r', encoding='utf-8') as f:
         lines = [l.rstrip('\n') for l in f.readlines()]
@@ -154,7 +217,7 @@ def chunk_txt_dir_fine(txt_dir, output_dir):
                 # Extract year from filename (expects a 4-digit year in filename)
                 match = re.search(r'(20\d{2})', filename)
                 year = match.group(1) if match else None
-                chunks = chunk_txt_file_fine(input_path, company=company, year=year)
+                chunks = chunk_txt_file_section_based(input_path, company=company, year=year)
                 output_company_dir = os.path.join(output_dir, company)
                 os.makedirs(output_company_dir, exist_ok=True)
                 out_json = os.path.join(output_company_dir, filename.replace('.txt', '_fine_chunks.json'))

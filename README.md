@@ -49,7 +49,7 @@ python scripts/chunk_10k_sections.py --txt_dir data/processed/10k_text --out_dir
 6.**Build Embedding Index**
 
 ```sh
-python scripts/embed_and_index_chunks.py
+python scripts/embed_chunks.py
 ```
 This produces faiss_index.bin and chunk_metadata.pkl for semantic search.
 

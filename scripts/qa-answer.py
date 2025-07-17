@@ -12,11 +12,11 @@ with open(META_PATH, 'rb') as f:
     metadata = pickle.load(f)
 
 embedder = SentenceTransformer('all-MiniLM-L6-v2')
-summarizer = pipeline('summarization', model='facebook/bart-large-cnn')
+qa = pipeline('question-answering', model='distilbert-base-cased-distilled-squad')
 
-def search_chunks(question, top_k=3, company=None):
+def search_chunks(question, top_k=5, company=None):
     q_emb = embedder.encode([question])
-    D, I = index.search(q_emb, 15)
+    D, I = index.search(q_emb, 20)
     results = []
     count = 0
     for idx in I[0]:
@@ -33,17 +33,20 @@ def search_chunks(question, top_k=3, company=None):
     return results
 
 def answer_question(question, company=None):
-    # Retrieve top relevant chunks
-    chunks = search_chunks(question, top_k=3, company=company)
+    chunks = search_chunks(question, top_k=5, company=company)
     if not chunks:
         return None, []
-    # Concatenate context from all retrieved chunks
-    context = "\n\n".join(chunk['text'] for chunk in chunks)
-    # BART has a max token limit; trim if needed (usually ~3500 chars is safe)
-    context = context[:3500]
-    prompt = f"Question: {question}\nContext: {context}"
-    summary = summarizer(prompt, max_length=200, min_length=50, do_sample=False)[0]['summary_text']
-    return summary, chunks
+    answers = []
+    for chunk in chunks:
+        ans = qa({'question': question, 'context': chunk['text']})
+        answers.append({
+            'answer': ans['answer'],
+            'score': ans['score'],
+            'context': chunk['text'],
+            'meta': chunk['meta']
+        })
+    answers = sorted(answers, key=lambda x: x['score'], reverse=True)
+    return answers[0], answers
 
 if __name__ == "__main__":
     print("Loaded index with {} chunks.".format(len(metadata)))
@@ -55,13 +58,12 @@ if __name__ == "__main__":
         q = input("\nAsk a financial question (or type 'exit'): ")
         if q.lower() == 'exit':
             break
-        answer, used_chunks = answer_question(q, company=company)
-        if not answer:
+        best, all_answers = answer_question(q, company=company)
+        if not best:
             print("No relevant chunks found for this query. Try another question or company.")
             continue
-        # Display a preview of the most relevant chunk for context info
-        best_chunk = used_chunks[0]['meta'] if used_chunks else {}
-        print(f"\nGenerated Answer: {answer}\n")
-        if used_chunks:
-            print(f"Top Context Section: {best_chunk.get('section')} | Subheading: {best_chunk.get('subheading')}")
-            print(f"File: {best_chunk.get('company')} {best_chunk.get('year')} - {best_chunk.get('filename')}\n")
+        meta = best['meta']
+        print(f"\nBest Answer: {best['answer']} (score: {best['score']:.3f})")
+        print(f"Section: {meta.get('section')} | Subheading: {meta.get('subheading')}")
+        print(f"Context: {best['context'][:200].replace('\n', ' ')}...")
+        print(f"Source: {meta['company']} {meta['year']} File: {meta['filename']}\n")
