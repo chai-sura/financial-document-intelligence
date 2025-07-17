@@ -42,7 +42,7 @@ python scripts/parse_html_to_text.py --file <input.html> --out <output.txt>
 5.**Chunk Plain Text for RAG**
 
 ```sh
-python scripts/chunk_10k_sections.py --txt_dir data/processed/10k_text --out_dir data/chunks/10k_chunks
+python scripts/chunk_10k_sections.py --txt_dir data/processed/10k_text --output_dir data/chunks/10k_chunks
 ```
 
 
@@ -62,5 +62,5 @@ python scripts/retrieve_and_answer.py
 
 8.**Launch Streamlit UI**
 ```sh
-streamlit run scripts/app.py
+streamlit run app.py
 ```
