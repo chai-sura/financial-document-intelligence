@@ -25,7 +25,7 @@ Edit the list of companies (TICKERS) and years (YEARS) in scripts/download_10k_f
 python scripts/download_10k_filings.py
 ```
 
-3.**Convert HTML to Plain Text**
+4.**Convert HTML to Plain Text**
 
 Bulk convert:
 
@@ -39,10 +39,28 @@ Single file:
 python scripts/parse_html_to_text.py --file <input.html> --out <output.txt>
 ```
 
-Troubleshooting
+5.**Chunk Plain Text for RAG**
 
-Check that your folder structure matches the project structure.
+```sh
+python scripts/chunk_10k_sections.py --txt_dir data/processed/10k_text --out_dir data/chunks/10k_chunks
+```
 
-If TOC or duplicate headers appear, update to the latest cleaning script.
 
-For new tickers, edit and rerun the scripts.
+6.**Build Embedding Index**
+
+```sh
+python scripts/embed_and_index_chunks.py
+```
+This produces faiss_index.bin and chunk_metadata.pkl for semantic search.
+
+
+7.**Retrieval-Augmented Q&A (CLI Version)**
+
+```sh
+python scripts/retrieve_and_answer.py
+```
+
+8.**Launch Streamlit UI**
+```sh
+streamlit run scripts/app.py
+```
