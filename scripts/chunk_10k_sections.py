@@ -217,7 +217,7 @@ def chunk_txt_dir_fine(txt_dir, output_dir):
                 # Extract year from filename (expects a 4-digit year in filename)
                 match = re.search(r'(20\d{2})', filename)
                 year = match.group(1) if match else None
-                chunks = chunk_txt_file_section_based(input_path, company=company, year=year)
+                chunks = chunk_txt_file_fine(input_path, company=company, year=year)
                 output_company_dir = os.path.join(output_dir, company)
                 os.makedirs(output_company_dir, exist_ok=True)
                 out_json = os.path.join(output_company_dir, filename.replace('.txt', '_fine_chunks.json'))
